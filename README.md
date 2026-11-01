@@ -38,6 +38,14 @@ Alur pencarian:
 
 Embedding adalah representasi numerik teks yang menempatkan teks bermakna mirip pada vector yang berdekatan. Qdrant bertugas menyimpan vector dan mencari tetangga terdekatnya; payload yang disimpan bersama setiap vector berisi `text` dan `category`, agar aplikasi dapat menampilkan hasil yang bisa dibaca. Tidak ada LLM yang digunakan.
 
+## Embedding Model
+
+Model yang digunakan adalah `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`. Fungsinya mengubah teks dokumen dan query menjadi embedding vector dengan representasi yang sama, sehingga kedekatan makna antara query dan dokumen dapat dihitung. Pada project ini ukuran vector model adalah 384.
+
+## Vector Database
+
+Qdrant menyimpan embedding dalam collection `programming_concepts` dan mencari vector dokumen yang paling dekat dengan vector query menggunakan cosine similarity. Payload setiap point menyimpan teks asli pada field `text` dan label topik pada field `category`; vector digunakan untuk pencarian, sedangkan payload menyediakan isi yang ditampilkan pada hasil.
+
 ## Menjalankan Aplikasi
 
 Aktifkan virtual environment, lalu jalankan:
@@ -191,7 +199,7 @@ Kelima query berikut menguji makna dengan susunan kata yang berbeda dari dokumen
   4. `FastAPI adalah framework Python untuk membangun backend API yang cepat dengan validasi data otomatis.` — kategori `backend`, skor `0.4854`.
   5. `HTML memberikan struktur dan makna pada konten halaman web melalui elemen seperti judul, tautan, dan formulir.` — kategori `frontend`, skor `0.4309`.
 
-Ketika Top-K bertambah, jumlah hasil bertambah, sedangkan urutannya tetap berdasarkan skor dari yang tertinggi. Hasil setelah posisi pertama cenderung kurang spesifik: Python adalah bahasa, bukan framework; HTML adalah bahasa markup, bukan framework Python. Karena itu, menambah Top-K memberi lebih banyak kandidat untuk ditinjau, tetapi tidak selalu membuat jawaban lebih baik. Top-K yang tepat bergantung pada kebutuhan pencarian.
+Ketika Top-K diperbesar dari 1 menjadi 3 lalu 5, jumlah kandidat yang dikembalikan bertambah dan urutan hasil tetap dari skor tertinggi ke terendah. Hasil tambahan memiliki skor yang lebih rendah; Python adalah bahasa, bukan framework, dan HTML adalah bahasa markup, bukan framework Python. **Apakah menambah Top-K selalu membuat hasil lebih baik? Tidak.** Dari percobaan ini, Top-K yang lebih tinggi menambah pilihan tetapi juga memasukkan hasil yang kurang spesifik. Top-K perlu dipilih sesuai kebutuhan pencarian.
 
 ## Experiment 3 - Bad Retrieval
 
@@ -200,7 +208,8 @@ Ketika Top-K bertambah, jumlah hasil bertambah, sedangkan urutannya tetap berdas
   1. `Node.js menjalankan JavaScript di sisi server dan cocok untuk membuat layanan jaringan yang menangani banyak koneksi.` — kategori `backend`, skor `0.0561`.
   2. `PostgreSQL adalah database relasional yang mendukung query kompleks, transaksi, dan berbagai tipe data.` — kategori `database`, skor `0.0434`.
   3. `Qdrant adalah vector database yang menyimpan embedding dan mencari data berdasarkan kemiripan vektor.` — kategori `database`, skor `0.0280`.
-- **Analisis:** Tidak ada hasil yang menjawab pertanyaan tentang pertandingan sepak bola. Dataset hanya berisi konsep pemrograman, tetapi vector search tetap mengurutkan kandidat yang tersedia. Skor yang rendah menunjukkan kemiripan yang rendah pada contoh ini. Aplikasi produksi dapat mempertimbangkan ambang skor agar hasil yang sangat tidak relevan tidak ditampilkan.
+- **Kenapa retrieval kurang bagus?** Tidak ada hasil yang menjawab pertanyaan tentang pertandingan sepak bola; hasil teratas membahas Node.js, database, dan vector database, bukan olahraga.
+- **Kemungkinan penyebab:** Dataset hanya berisi konsep pemrograman dan tidak mencakup informasi sepak bola. Vector search tetap mengurutkan kandidat yang tersedia meskipun query berada di luar cakupan dataset. Skor yang rendah (`0.0561` sampai `0.0280`) mendukung bahwa kandidat tersebut tidak mirip dengan query. Untuk aplikasi yang lebih besar, cakupan dataset dan ambang skor relevansi dapat dipertimbangkan.
 
 ## Personal Reflection
 
@@ -230,3 +239,14 @@ Ketika Top-K bertambah, jumlah hasil bertambah, sedangkan urutannya tetap berdas
 ## Batasan
 
 Hasil pencarian dibatasi pada isi dataset kecil yang tersedia dan tidak menjawab pertanyaan faktual di luar cakupannya. Score cosine similarity membantu mengurutkan kandidat, tetapi bukan jaminan bahwa hasil benar atau relevan untuk setiap query.
+
+## Checklist Pengumpulan
+
+- [x] Aplikasi FastAPI dijalankan dan endpoint `/health`, `/index`, dan `/search` diuji.
+- [x] Model SentenceTransformer yang diminta berhasil digunakan.
+- [x] Dataset 26 data dengan 4 kategori diindeks ke Qdrant lokal.
+- [x] Hasil search menampilkan `text`, `category`, dan similarity score; `top_k` dapat diubah.
+- [x] Lima query semantic search, Top-K 1/3/5, dan satu bad retrieval sudah diuji serta dicatat di atas.
+- [x] README, `requirements.txt`, dan `.gitignore` tersedia.
+- [x] Source project sudah dipush ke [repository GitHub](https://github.com/navitadamayantisyarif/Tugas-Semantic-Search-Vector-Database).
+- [ ] Pastikan refleksi personal sesuai pengalaman sendiri dan pastikan mentor memiliki akses ke repository sebelum mengirim link repository di LMS.
