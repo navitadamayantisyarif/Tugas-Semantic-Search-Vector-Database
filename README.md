@@ -239,14 +239,3 @@ Ketika Top-K diperbesar dari 1 menjadi 3 lalu 5, jumlah kandidat yang dikembalik
 ## Batasan
 
 Hasil pencarian dibatasi pada isi dataset kecil yang tersedia dan tidak menjawab pertanyaan faktual di luar cakupannya. Score cosine similarity membantu mengurutkan kandidat, tetapi bukan jaminan bahwa hasil benar atau relevan untuk setiap query.
-
-## Checklist Pengumpulan
-
-- [x] Aplikasi FastAPI dijalankan dan endpoint `/health`, `/index`, dan `/search` diuji.
-- [x] Model SentenceTransformer yang diminta berhasil digunakan.
-- [x] Dataset 26 data dengan 4 kategori diindeks ke Qdrant lokal.
-- [x] Hasil search menampilkan `text`, `category`, dan similarity score; `top_k` dapat diubah.
-- [x] Lima query semantic search, Top-K 1/3/5, dan satu bad retrieval sudah diuji serta dicatat di atas.
-- [x] README, `requirements.txt`, dan `.gitignore` tersedia.
-- [x] Source project sudah dipush ke [repository GitHub](https://github.com/navitadamayantisyarif/Tugas-Semantic-Search-Vector-Database).
-- [ ] Pastikan refleksi personal sesuai pengalaman sendiri dan pastikan mentor memiliki akses ke repository sebelum mengirim link repository di LMS.
