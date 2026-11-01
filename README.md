@@ -23,28 +23,54 @@ Data sumber ada di [`data.py`](./data.py). Setiap item memiliki `text` dan `cate
 
 ## Application Flow
 
-Saat indexing, aplikasi mengubah teks setiap dokumen menjadi embedding dengan SentenceTransformer. Vector beserta teks dan kategorinya disimpan sebagai payload di collection Qdrant. Saat pencarian, query diubah menjadi vector dengan model yang sama. Qdrant membandingkan vector query terhadap vector tersimpan menggunakan cosine similarity dan mengembalikan hasil terdekat sebanyak `top_k`.
+Alur indexing:
 
-Embedding mewakili makna teks sebagai kumpulan angka. Qdrant menyimpan dan mengambil vector berdasarkan kedekatan makna, sementara payload mempertahankan teks dan kategori agar hasilnya dapat dibaca.
+1. Endpoint `/index` mengambil 26 dokumen dari `data.py`.
+2. SentenceTransformer mengubah setiap teks menjadi vector embedding berukuran 384.
+3. Aplikasi membuat collection Qdrant dengan metrik cosine, lalu menyimpan vector dan payload dokumen.
+
+Alur pencarian:
+
+1. Pengguna mengirim kalimat dan `top_k` ke endpoint `/search`.
+2. Model yang sama mengubah query menjadi vector.
+3. Qdrant mencari vector dokumen terdekat berdasarkan cosine similarity.
+4. API mengembalikan teks, kategori, dan similarity score untuk setiap hasil.
+
+Embedding adalah representasi numerik teks yang menempatkan teks bermakna mirip pada vector yang berdekatan. Qdrant bertugas menyimpan vector dan mencari tetangga terdekatnya; payload yang disimpan bersama setiap vector berisi `text` dan `category`, agar aplikasi dapat menampilkan hasil yang bisa dibaca. Tidak ada LLM yang digunakan.
 
 ## Menjalankan Aplikasi
 
 Aktifkan virtual environment, lalu jalankan:
 
 ```powershell
+.\venv\Scripts\Activate.ps1
 fastapi dev main.py
 ```
 
 Pada pemakaian pertama, model embedding diunduh dari Hugging Face. Buka dokumentasi interaktif di <http://127.0.0.1:8000/docs>.
 
 ```powershell
-curl.exe -X POST http://127.0.0.1:8000/index
+Invoke-RestMethod -Uri http://127.0.0.1:8000/index -Method Post
 ```
 
+Indexing tanpa body menggunakan dataset bawaan dan mengganti isi collection agar indeks mencerminkan dataset tersebut. Endpoint juga menerima dataset sendiri:
+
+```json
+{
+  "documents": [
+    {
+      "text": "FastAPI digunakan untuk membangun backend API.",
+      "category": "backend"
+    }
+  ]
+}
+```
+
+Jalankan indexing sebelum mencari. Database lokal disimpan di `qdrant_data/` dan diabaikan oleh Git.
+
 ```powershell
-curl.exe -X POST http://127.0.0.1:8000/search `
-  -H "Content-Type: application/json" `
-  -d "{\"query\":\"framework Python untuk backend web\",\"top_k\":3}"
+$body = @{ query = "framework Python untuk backend web"; top_k = 3 } | ConvertTo-Json
+Invoke-RestMethod -Uri http://127.0.0.1:8000/search -Method Post -ContentType "application/json" -Body $body
 ```
 
 ## API Endpoint
@@ -52,10 +78,20 @@ curl.exe -X POST http://127.0.0.1:8000/search `
 | Method | Path | Fungsi |
 |---|---|---|
 | `GET` | `/health` | Memeriksa status aplikasi dan model |
-| `POST` | `/index` | Index dataset bawaan; menerima `{"documents":[{"text":"...","category":"..."}]}` untuk dataset pilihan |
+| `POST` | `/index` | Index dataset bawaan jika body kosong; atau menerima `{"documents":[{"text":"...","category":"..."}]}` untuk dataset pilihan |
 | `POST` | `/search` | Mencari data semantik; menerima `{"query":"...","top_k":3}` |
 
-`top_k` bernilai 1 sampai 50 dan default-nya 3. Panggil `/index` setidaknya sekali sebelum `/search`. Collection disimpan di `qdrant_data/`, yang tidak perlu dimasukkan ke repository.
+`top_k` bernilai 1 sampai 50 dan default-nya 3. Query dan teks dokumen harus tidak kosong. Jika pencarian diminta sebelum indexing, API mengembalikan HTTP 409; request tidak valid ditolak dengan HTTP 422.
+
+### Pengujian endpoint yang dilakukan
+
+- `GET /health` mengembalikan status `OK` dan model `ready`.
+- `POST /index` berhasil mengindeks 26 dokumen dan membuat collection `programming_concepts`.
+- Lima query berbeda dijalankan melalui `POST /search` dengan `top_k: 3`.
+- Query Top-K yang sama dijalankan dengan `top_k` 1, 3, dan 5.
+- Satu query di luar topik dataset dijalankan untuk mengamati bad retrieval.
+- Validasi `top_k` di luar rentang diuji dan API mengembalikan HTTP 422.
+- Request indexing dataset kustom dan pengindeksan ulang dataset bawaan juga diuji.
 
 ## Example Request dan Response
 
@@ -97,50 +133,99 @@ Contoh response aktual:
 
 ## Experiment 1 - Semantic Search
 
-Skor adalah cosine similarity yang dikembalikan Qdrant. Query dibuat berbeda dari kalimat dataset.
+Kelima query berikut menguji makna dengan susunan kata yang berbeda dari dokumen. Setiap baris berisi hasil aktual teratas dari endpoint `/search` dengan `top_k: 3`; skornya adalah cosine similarity dari Qdrant.
 
-| Query | Top result | Score | Penilaian |
-|---|---|---:|---|
-| Bahasa yang cocok untuk mengolah data dan membuat sistem pintar | Python untuk otomasi, analisis data, dan kecerdasan buatan | 0.5828 | Relevan; deskripsi Python menyebut analisis data dan AI. |
-| Cara membuat situs bisa merespons klik pengguna | JavaScript untuk membuat halaman web interaktif | 0.5649 | Relevan; interaksi halaman berkaitan dengan perilaku yang dipicu pengguna. |
-| Alat untuk menyimpan informasi dan mencarinya kembali secara terstruktur | Redis untuk menyimpan data dalam memori | 0.5090 | Sebagian relevan; Redis menyimpan data, tetapi query kurang spesifik dan hasil database relasional tidak muncul di posisi pertama. |
-| Program di sisi server untuk menerima permintaan dari aplikasi | REST API dengan sumber daya dan metode HTTP | 0.4805 | Cukup relevan; REST API menjelaskan cara aplikasi berkomunikasi, walau bukan framework server tertentu. |
-| Bagaimana mempercepat aplikasi dengan menyimpan jawaban yang sering dipakai | Caching untuk menyimpan hasil yang sering diminta | 0.7182 | Sangat relevan; hasil menyebut caching, penyimpanan hasil, dan respons lebih cepat. |
+### Query 1
+
+- **Query:** Bahasa yang cocok untuk mengolah data dan membuat sistem pintar
+- **Top result:** Python adalah bahasa pemrograman yang mudah dibaca dan banyak digunakan untuk otomasi, analisis data, dan kecerdasan buatan.
+- **Kategori:** `bahasa-pemrograman`
+- **Similarity score:** `0.5828`
+- **Penilaian:** Relevan karena dokumen secara eksplisit membahas analisis data dan kecerdasan buatan, sesuai dengan makna query.
+
+### Query 2
+
+- **Query:** Cara membuat situs bisa merespons klik pengguna
+- **Top result:** JavaScript memungkinkan halaman web menjadi interaktif dan dapat berjalan di browser maupun server menggunakan Node.js.
+- **Kategori:** `bahasa-pemrograman`
+- **Similarity score:** `0.5649`
+- **Penilaian:** Relevan. Interaktivitas halaman web adalah konsep yang sesuai dengan situs yang merespons tindakan pengguna.
+
+### Query 3
+
+- **Query:** Alat untuk menyimpan informasi dan mencarinya kembali secara terstruktur
+- **Top result:** Redis menyimpan data dalam memori dan sering digunakan sebagai cache atau penyimpanan sementara yang cepat.
+- **Kategori:** `database`
+- **Similarity score:** `0.5090`
+- **Penilaian:** Sebagian relevan karena Redis menyimpan data, tetapi hasilnya tidak sepenuhnya menggambarkan pencarian terstruktur. Query terlalu luas sehingga database relasional tidak otomatis berada di posisi pertama.
+
+### Query 4
+
+- **Query:** Program di sisi server untuk menerima permintaan dari aplikasi
+- **Top result:** REST API menyediakan sumber daya melalui HTTP dengan metode seperti GET, POST, PUT, dan DELETE.
+- **Kategori:** `backend`
+- **Similarity score:** `0.4805`
+- **Penilaian:** Cukup relevan karena REST API menjelaskan komunikasi permintaan antara aplikasi dan backend. Namun, hasil ini menjelaskan antarmuka API, bukan framework server tertentu.
+
+### Query 5
+
+- **Query:** Bagaimana mempercepat aplikasi dengan menyimpan jawaban yang sering dipakai
+- **Top result:** Caching menyimpan hasil yang sering diminta agar aplikasi dapat merespons lebih cepat dan mengurangi beban database.
+- **Kategori:** `backend`
+- **Similarity score:** `0.7182`
+- **Penilaian:** Sangat relevan karena hasil menjelaskan penyimpanan hasil yang sering diminta untuk mempercepat respons.
 
 ## Experiment 2 - Top-K
 
 - **Query:** Framework Python untuk membuat layanan web
-- **Top-K = 1:** Flask (backend), skor `0.5825`.
-- **Top-K = 3:** Flask (`0.5825`), Python (`0.5408`), Django (`0.5137`).
-- **Top-K = 5:** Flask (`0.5825`), Python (`0.5408`), Django (`0.5137`), FastAPI (`0.4854`), HTML (`0.4309`).
+- **Top-K = 1 (hasil aktual):**
+  1. `Flask adalah framework web Python yang ringan dan memberi kebebasan untuk memilih komponen aplikasi.` — kategori `backend`, skor `0.5825`.
+- **Top-K = 3 (hasil aktual):**
+  1. `Flask adalah framework web Python yang ringan dan memberi kebebasan untuk memilih komponen aplikasi.` — kategori `backend`, skor `0.5825`.
+  2. `Python adalah bahasa pemrograman yang mudah dibaca dan banyak digunakan untuk otomasi, analisis data, dan kecerdasan buatan.` — kategori `bahasa-pemrograman`, skor `0.5408`.
+  3. `Django menyediakan banyak fitur bawaan seperti autentikasi, ORM, dan panel admin untuk aplikasi web Python.` — kategori `backend`, skor `0.5137`.
+- **Top-K = 5 (hasil aktual):**
+  1. `Flask adalah framework web Python yang ringan dan memberi kebebasan untuk memilih komponen aplikasi.` — kategori `backend`, skor `0.5825`.
+  2. `Python adalah bahasa pemrograman yang mudah dibaca dan banyak digunakan untuk otomasi, analisis data, dan kecerdasan buatan.` — kategori `bahasa-pemrograman`, skor `0.5408`.
+  3. `Django menyediakan banyak fitur bawaan seperti autentikasi, ORM, dan panel admin untuk aplikasi web Python.` — kategori `backend`, skor `0.5137`.
+  4. `FastAPI adalah framework Python untuk membangun backend API yang cepat dengan validasi data otomatis.` — kategori `backend`, skor `0.4854`.
+  5. `HTML memberikan struktur dan makna pada konten halaman web melalui elemen seperti judul, tautan, dan formulir.` — kategori `frontend`, skor `0.4309`.
 
-Ketika Top-K diperbesar, aplikasi mengembalikan lebih banyak kandidat dengan skor yang semakin rendah atau sama. Flask, Django, dan FastAPI adalah framework yang sesuai, tetapi Python dan HTML merupakan hasil yang lebih umum/kurang tepat untuk query tersebut. Jadi, menambah Top-K memberi lebih banyak opsi tetapi tidak otomatis membuat semua hasil lebih relevan.
+Ketika Top-K bertambah, jumlah hasil bertambah, sedangkan urutannya tetap berdasarkan skor dari yang tertinggi. Hasil setelah posisi pertama cenderung kurang spesifik: Python adalah bahasa, bukan framework; HTML adalah bahasa markup, bukan framework Python. Karena itu, menambah Top-K memberi lebih banyak kandidat untuk ditinjau, tetapi tidak selalu membuat jawaban lebih baik. Top-K yang tepat bergantung pada kebutuhan pencarian.
 
 ## Experiment 3 - Bad Retrieval
 
 - **Query:** Siapa yang memenangkan pertandingan sepak bola tadi malam?
 - **Actual results dan similarity score:**
-  1. Node.js untuk layanan jaringan di sisi server — `0.0561`
-  2. PostgreSQL untuk database relasional — `0.0434`
-  3. Qdrant untuk pencarian vector — `0.0280`
-- **Analisis:** Tidak ada hasil yang menjawab pertanyaan tentang pertandingan sepak bola. Dataset hanya berisi konsep pemrograman, tetapi vector search tetap mengurutkan kandidat yang tersedia. Skor yang rendah menunjukkan bahwa kandidat tersebut tidak mirip dengan query; aplikasi produksi dapat mempertimbangkan ambang skor agar hasil yang sangat tidak relevan tidak ditampilkan.
+  1. `Node.js menjalankan JavaScript di sisi server dan cocok untuk membuat layanan jaringan yang menangani banyak koneksi.` — kategori `backend`, skor `0.0561`.
+  2. `PostgreSQL adalah database relasional yang mendukung query kompleks, transaksi, dan berbagai tipe data.` — kategori `database`, skor `0.0434`.
+  3. `Qdrant adalah vector database yang menyimpan embedding dan mencari data berdasarkan kemiripan vektor.` — kategori `database`, skor `0.0280`.
+- **Analisis:** Tidak ada hasil yang menjawab pertanyaan tentang pertandingan sepak bola. Dataset hanya berisi konsep pemrograman, tetapi vector search tetap mengurutkan kandidat yang tersedia. Skor yang rendah menunjukkan kemiripan yang rendah pada contoh ini. Aplikasi produksi dapat mempertimbangkan ambang skor agar hasil yang sangat tidak relevan tidak ditampilkan.
 
 ## Personal Reflection
 
-1. Sebelum memahami semantic search, saya membayangkan mesin pencari terutama mencocokkan kata yang diketik dengan kata yang tersimpan. Pada project ini, query yang memakai ungkapan berbeda tetap dapat menemukan konsep yang maknanya berdekatan.
-2. Keyword search mencari kecocokan istilah, sedangkan semantic search membandingkan representasi makna. Semantic search lebih toleran terhadap parafrasa, tetapi hasilnya masih bergantung pada model dan isi dataset.
-3. Embedding mengubah teks menjadi vector numerik sehingga kemiripan makna dapat dihitung dan dibandingkan.
-4. List Python cukup untuk contoh kecil, tetapi tidak menyediakan pencarian vector dan pengelolaan data besar secara efisien seperti vector database.
-5. Tantangan utama project ini adalah memahami alur yang menghubungkan hasil encoding, ukuran vector, collection Qdrant, dan payload, lalu membaca hasil yang tidak selalu relevan seperti kandidat Redis pada query penyimpanan data.
-6. AI membantu menyusun kerangka API, validasi request, indexing, serta dokumentasi. Model embedding dan hasil pencarian tetap diuji melalui endpoint.
-7. Endpoint indexing meng-encode dokumen dan menyimpan vector serta payload ke Qdrant. Endpoint search meng-encode query, meminta vector terdekat, lalu mengembalikan teks, kategori, dan skor.
-8. Project ini dapat dikembangkan menjadi pencarian dokumentasi teknis atau katalog produk dengan dataset yang sesuai dan evaluasi relevansi yang lebih luas.
+1. **Sebelum mengerjakan tugas ini, bagaimana membayangkan search engine bekerja? Apakah ada perbedaan setelah mempelajari semantic search?**
+   Sebelum mengerjakan project ini, saya membayangkan search engine terutama mencari kata yang sama dengan kata dalam dokumen. Setelah mempelajari semantic search, saya memahami bahwa query dapat diubah menjadi embedding dan dibandingkan berdasarkan kedekatan makna. Karena itu, query dengan susunan kata berbeda masih dapat menemukan dokumen yang sesuai, seperti query tentang “mengolah data dan membuat sistem pintar” yang menemukan deskripsi Python tentang analisis data dan kecerdasan buatan.
+2. **Apa perbedaan terbesar antara keyword search dan semantic search?**
+   Keyword search mengutamakan kecocokan kata atau istilah, sedangkan semantic search membandingkan representasi makna dari query dan dokumen. Semantic search lebih toleran terhadap parafrasa, tetapi bukan berarti selalu benar: hasil tetap bergantung pada model, dataset, dan cara query dirumuskan.
+3. **Apa fungsi embedding di dalam semantic search?**
+   Embedding mengubah teks menjadi vector angka yang mewakili pola makna teks. Vector query dibandingkan dengan vector dokumen; vector yang lebih dekat menurut metrik yang digunakan menjadi kandidat hasil yang lebih mirip.
+4. **Kenapa embedding tidak cukup hanya disimpan di list Python jika jumlah data menjadi sangat banyak?**
+   List Python cocok untuk demonstrasi dengan data sedikit. Saat data bertambah, aplikasi memerlukan penyimpanan persisten, pencarian tetangga terdekat yang efisien, dan cara mengelola payload serta collection. Vector database seperti Qdrant menyediakan kemampuan tersebut sehingga aplikasi tidak perlu membandingkan query secara manual terhadap semua vector dalam list.
+5. **Bagian project mana yang paling sulit dipahami?**
+   Bagian yang paling menantang adalah memahami hubungan ukuran embedding dengan konfigurasi vector Qdrant, serta memastikan vector, teks, dan kategori disimpan pada point yang sama. Saya juga perlu menafsirkan hasil yang kurang tepat, misalnya hasil Redis untuk query penyimpanan informasi yang sebenarnya terlalu luas.
+6. **Bagian kode mana yang paling banyak dibantu oleh AI?**
+   Bantuan paling banyak digunakan untuk menyusun struktur endpoint FastAPI dan menghubungkan proses encoding SentenceTransformer dengan indexing dan pencarian Qdrant. AI juga membantu merapikan dokumentasi dan menyiapkan format pengujian. Hasil endpoint dijalankan untuk memeriksa bahwa implementasinya bekerja.
+7. **Jelaskan dengan bahasa sendiri bagaimana bagian kode tersebut bekerja.**
+   Saat `/index` dipanggil tanpa body, aplikasi mengambil dokumen dari `data.py`, mengubah teks menjadi embedding, membuat collection dengan ukuran vector model dan metrik cosine, lalu menyimpan vector beserta `text` dan `category` ke payload Qdrant. Saat `/search` dipanggil, aplikasi mengubah query menjadi embedding yang sama jenisnya, meminta Qdrant mengambil sebanyak `top_k` vector terdekat, lalu mengembalikan teks, kategori, dan score tiap hasil.
+8. **Aplikasi ini bisa dikembangkan menjadi aplikasi apa jika project dilanjutkan?**
+   Aplikasi dapat dikembangkan menjadi pencarian dokumentasi pemrograman berbahasa Indonesia. Pengembang dapat menambah dokumen tutorial dan FAQ, memperbarui dataset tanpa mengganti seluruh collection, menyediakan filter kategori, lalu menguji relevansi dengan kumpulan query dan penilaian pengguna.
 
 ## AI Usage
 
 - **AI tools:** GitHub Copilot.
-- **Bantuan AI:** Menyusun struktur aplikasi, validasi request, integrasi embedding dengan Qdrant, serta draf dokumentasi dan skenario pengujian.
-- **Penyesuaian/validasi:** Dataset konsep pemrograman disusun untuk project ini; aplikasi dijalankan dan query eksperimen dikirim melalui API untuk memeriksa hasil aktual.
+- **AI digunakan untuk membantu bagian apa?** Menyusun struktur awal aplikasi FastAPI, validasi request Pydantic, integrasi SentenceTransformer dengan Qdrant, draf README, dan penyusunan skenario eksperimen.
+- **Bagian apa yang diubah atau ditentukan sendiri setelah mendapat hasil AI?** Tema dan isi dataset konsep pemrograman ditentukan dalam proses pengerjaan dengan bantuan AI; endpoint diuji langsung; query eksperimen, Top-K, dan bad retrieval diperiksa dari respons API; isi README disesuaikan dengan skor dan hasil aktual. AI tidak digunakan untuk menghasilkan jawaban pencarian saat aplikasi berjalan.
 
 ## Batasan
 
